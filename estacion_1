@@ -1,0 +1,149 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BMP280.h>
+#include <SoftwareSerial.h>
+#include "Adafruit_CCS811.h"
+#include <TinyGPSPlus.h>
+
+#define SS_RX 2  // Pin 2 es la entrada RX del módulo LoRa
+#define SS_TX 3  // Pin 3 es la salida TX del módulo LoRa
+const int RX = 7;
+const int TX = 6;
+SoftwareSerial gps(RX, TX);
+
+#include "Adafruit_CCS811.h"
+#include <SD.h>
+
+Adafruit_CCS811 ccs;
+File myFile;
+
+SoftwareSerial lora(SS_RX, SS_TX);
+
+Adafruit_BMP280 bmp;  // Inicializar objeto BMP280
+int buzz = 8;
+const int Alt_act = 800;
+const int Alt_desa = 310;
+bool buzzAct = false;
+
+void setup() {
+
+  Serial.begin(9600);
+  gps.begin(9600);
+
+  Serial.print("Iniciando SD ...");
+  if (!SD.begin(10)) {
+    Serial.println("No se pudo inicializar");
+    return;
+  }
+  Serial.println("inicializacion exitosa");
+
+  Serial.begin(9600);
+
+  Serial.println("CCS811 test");
+
+  if (!ccs.begin()) {
+    Serial.println("Failed to start sensor! Please check your wiring.");
+    while (1);
+  }
+
+  // Wait for the sensor to be ready
+  while (!ccs.available());
+
+  Serial.begin(9600);
+  lora.begin(9600);
+  if (!bmp.begin(0x76)) {  // Dirección I2C por defecto para el BMP280
+    Serial.println("No se pudo encontrar el sensor BMP280, verifique las conexiones!");
+    while (1);
+  }
+  Serial.println("CCS811 test");
+  if (!ccs.begin()) {
+    Serial.println("Failed to start sensor! Please check your wiring.");
+    while (1);
+  }
+  // Wait for the sensor to be ready
+  while (!ccs.available());
+  pinMode(buzz, OUTPUT);
+}
+
+void loop() {
+  float temp = bmp.readTemperature(); // Leer la temperatura en grados Celsius
+  float pres = bmp.readPressure() / 100.0F; // Leer la presión en hectopascales
+  float alt = bmp.readAltitude(1013.3); // Calcular la altura en metros, en base a la presión actual
+  float co2 = ccs.geteCO2();
+  float tvoc = ccs.getTVOC();
+  char data;
+     if (gps.available())
+  {
+    
+    data = gps.read();
+    Serial.print(data);
+  }
+  else {
+      Serial.println("no gps disponible!");
+    }
+  Serial.print("Temperatura = ");
+  Serial.print(temp);
+  Serial.print(" *C");
+  Serial.print("  Presion = ");
+  Serial.print(pres);
+  Serial.print(" hPa");
+  Serial.print("  Altura = ");
+  Serial.print((alt)+40);
+  Serial.println(" m");
+  if (ccs.available()) {
+    if (!ccs.readData()) {
+      Serial.print("CO2: ");
+      Serial.print(ccs.geteCO2());
+      Serial.print("ppm, TVOC: ");
+      Serial.println(ccs.getTVOC());
+    }
+    else {
+      Serial.println("ERROR!");
+      while (1);
+    }
+  }
+
+  // Enviar datos al receptor mediante el módulo LoRa
+  lora.write((uint8_t*)&temp, sizeof(float));  // Enviar la temperatura
+  lora.write((uint8_t*)&pres, sizeof(float));  // Enviar la presión
+  lora.write((uint8_t*)&alt, sizeof(float));   // Enviar la altura
+  lora.write((uint8_t*)&co2, sizeof(float));
+  lora.write((uint8_t*)&tvoc, sizeof(float));
+  lora.write((uint8_t*)&data, sizeof(char));
+
+delay(950);  // Esperar 
+
+  
+  myFile = SD.open("dades2.txt", FILE_WRITE);//abrimos  el archivo
+
+  if (myFile) {
+    myFile.print("CO2: ");
+    myFile.print(ccs.geteCO2());
+    myFile.print("ppm, TVOC: ");
+    myFile.println(ccs.getTVOC());
+    myFile.print("Temperatura = ");
+    myFile.print(temp);
+    myFile.print(" *C");
+    myFile.print("  Presion = ");
+    myFile.print(pres);
+    myFile.print(" hPa");
+    myFile.print("  Altura = ");
+    myFile.print(alt);
+    myFile.println(" m");
+    myFile.print(data);
+    myFile.close(); //cerramos el archivo
+
+  } else {
+    Serial.println("Error al abrir el archivo");
+  }
+  delay(500);
+  int alt_actual= bmp.readAltitude(1013.25);
+  if (alt_actual > Alt_act && !buzzAct){
+    buzzAct= true;
+    tone(buzz, 1000);
+  }
+  if (alt_actual < Alt_desa && buzzAct){
+    buzzAct= false;
+    noTone(buzz);
+  }
+}
